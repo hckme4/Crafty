@@ -1,188 +1,224 @@
-#include <iostream>
-#include <GL/gl.h>
-#include <GL/glx.h>
-#include <GL/glu.h>
 #include <X11/Xlib.h>
+#include <GL/glx.h>
+#include <GL/gl.h>
+#include <GL/glu.h>
+#include <iostream>
 #include <cmath>
 
-// Global variables
-Display *display;
-Window window;
-GLXContext glContext;
+// Define mouse sensitivity and move speed
+#define MOUSE_SENSITIVITY 0.1f
+#define MOVE_SPEED 0.1f
 
-// Function to create an OpenGL window
-void createWindow(int width, int height) {
-    // Open the X display
-    display = XOpenDisplay(nullptr);
-    if (!display) {
-        std::cerr << "Failed to open X display" << std::endl;
-        exit(1);
-    }
+// X11 variables
+Display *dpy;
+Window root, win;
+GLXContext glc;
+XVisualInfo *vi;
+Colormap cmap;
+XSetWindowAttributes swa;
+XWindowAttributes gwa;
+XEvent xev;
 
-    // Get the default screen and root window
-    int screen = DefaultScreen(display);
-    Window root = RootWindow(display, screen);
+// Camera variables
+GLfloat cameraPos[] = {0.0f, 0.0f, 5.0f}; // Initial camera position (x, y, z)
+GLfloat cameraDir[] = {0.2f, 0.2f, -1.0f}; // Initial camera direction (x, y, z)
+GLfloat cameraRight[] = {1.0f, 0.0f, 0.0f}; // Initial camera right vector (x, y, z)
+GLfloat cameraUp[] = {0.0f, 1.0f, 0.0f}; // Initial camera up vector (x, y, z)
 
-    // Create an RGB visual
-    int attribs[] = {GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None};
-    XVisualInfo *visualInfo = glXChooseVisual(display, screen, attribs);
-    if (!visualInfo) {
-        std::cerr << "Failed to find suitable visual" << std::endl;
-        exit(1);
-    }
+// Cursor variables
+bool cursorCaptured = false;
+int lastMouseX, lastMouseY;
 
-    // Create a colormap
-    Colormap colormap = XCreateColormap(display, root, visualInfo->visual, AllocNone);
-
-    // Set window attributes
-    XSetWindowAttributes windowAttributes;
-    windowAttributes.colormap = colormap;
-    windowAttributes.event_mask = ExposureMask | KeyPressMask;
-
-    // Create the window
-    window = XCreateWindow(display, root, 0, 0, width, height, 0, visualInfo->depth,
-                           InputOutput, visualInfo->visual, CWColormap | CWEventMask, &windowAttributes);
-
-    // Create GLX context
-    glContext = glXCreateContext(display, visualInfo, nullptr, GL_TRUE);
-    if (!glContext) {
-        std::cerr << "Failed to create OpenGL context" << std::endl;
-        exit(1);
-    }
-
-    // Make GLX context current
-    if (!glXMakeCurrent(display, window, glContext)) {
-        std::cerr << "Failed to make OpenGL context current" << std::endl;
-        exit(1);
-    }
-
-    // Enable depth testing
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
-
-    // Map the window to the screen
-    XMapWindow(display, window);
+// OpenGL functions
+void initGL() {
+    glEnable(GL_DEPTH_TEST); // Enable depth testing
+    glClearColor(1.0, 1.0, 1.0, 1.0); // Set clear color to white
 }
 
-// Function to render a rotating 3D cube
-/*void render() {
-    static float angle = 0.0f;
+void resizeGL(int width, int height) {
+    glViewport(0, 0, width, height); // Set viewport
+    glMatrixMode(GL_PROJECTION); // Switch to projection matrix
+    glLoadIdentity(); // Reset projection matrix
+    gluPerspective(45.0, (float)width / (float)height, 0.1, 100.0); // Set perspective projection
+    glMatrixMode(GL_MODELVIEW); // Switch back to modelview matrix
+}
 
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glLoadIdentity();
+void drawTetrahedron() {
+    // Tetrahedron vertices
+    GLfloat vertices[4][3] = {
+        {0.0, 1.0, 0.0}, // Top
+        {-1.0, -1.0, 1.0}, // Front bottom-left
+        {1.0, -1.0, 1.0}, // Front bottom-right
+        {0.0, -1.0, -1.0} // Back bottom
+    };
 
-    glTranslatef(0.0f, 0.0f, -5.0f);
-    glRotatef(angle, 1.0f, 1.0f, 1.0f);
+    // Tetrahedron faces (vertex indices)
+    GLint faces[4][3] = {
+        {0, 1, 2}, // Front face
+        {0, 2, 3}, // Right face
+        {0, 3, 1}, // Left face
+        {1, 3, 2} // Bottom face
+    };
 
-    glBegin(GL_QUADS);
+    // Tetrahedron face colors
+    GLfloat colors[4][3] = {
+        {1.0, 0.0, 0.0}, // Red
+        {0.0, 1.0, 0.0}, // Green
+        {0.0, 0.0, 1.0}, // Blue
+        {1.0, 1.0, 0.0} // Yellow
+    };
 
-    // Front face
-    glColor3f(1.0f, 0.0f, 0.0f);
-    glVertex3f(-1.0f, -1.0f, 1.0f);
-    glVertex3f(1.0f, -1.0f, 1.0f);
-    glVertex3f(1.0f, 1.0f, 1.0f);
-    glVertex3f(-1.0f, 1.0f, 1.0f);
-
-    // Back face
-    glColor3f(1.0f, 0.0f, 0.0f);
-    glVertex3f(-1.0f, -1.0f, -1.0f);
-    glVertex3f(-1.0f, 1.0f, -1.0f);
-    glVertex3f(1.0f, 1.0f, -1.0f);
-    glVertex3f(1.0f, -1.0f, -1.0f);
-
-    // Top face
-    glColor3f(1.0f, 0.0f, 0.0f);
-    glVertex3f(-1.0f, 1.0f, -1.0f);
-    glVertex3f(-1.0f, 1.0f, 1.0f);
-    glVertex3f(1.0f, 1.0f, 1.0f);
-    glVertex3f(1.0f, 1.0f, -1.0f);
-
-    // Bottom face
-    glColor3f(1.0f, 0.0f, 0.0f);
-    glVertex3f(-1.0f, -1.0f, -1.0f);
-    glVertex3f(1.0f, -1.0f, -1.0f);
-    glVertex3f(1.0f, -1.0f, 1.0f);
-    glVertex3f(-1.0f, -1.0f, 1.0f);
-
-    // Right face
-    glColor3f(1.0f, 0.0f, 0.0f);
-    glVertex3f(1.0f, -1.0f, -1.0f);
-    glVertex3f(1.0f, 1.0f, -1.0f);
-    glVertex3f(1.0f, 1.0f, 1.0f);
-    glVertex3f(1.0f, -1.0f, 1.0f);
-
-    // Left face
-    glColor3f(1.0f, 0.0f, 0.0f);
-    glVertex3f(-1.0f, -1.0f, -1.0f);
-    glVertex3f(-1.0f, -1.0f, 1.0f);
-    glVertex3f(-1.0f, 1.0f, 1.0f);
-    glVertex3f(-1.0f, 1.0f, -1.0f);
-
+    // Draw tetrahedron
+    glBegin(GL_TRIANGLES);
+    for (int i = 0; i < 4; ++i) {
+        glColor3fv(colors[i]);
+        for (int j = 0; j < 3; ++j) {
+            glVertex3fv(vertices[faces[i][j]]);
+        }
+    }
     glEnd();
-
-    glXSwapBuffers(display, window);
-
-    angle += 0.5f;
-    if (angle >= 360.0f)
-        angle -= 360.0f;
-}*/
-
-void render() {
-    // Get window size
-    XWindowAttributes windowAttributes;
-    XGetWindowAttributes(display, window, &windowAttributes);
-    int width = windowAttributes.width;
-    int height = windowAttributes.height;
-
-    // Create graphics context
-    GC gc = XCreateGC(display, window, 0, NULL);
-
-    // Set background color to white
-    XSetForeground(display, gc, WhitePixel(display, 0));
-    XFillRectangle(display, window, gc, 0, 0, width, height);
-
-    // Set foreground color to red
-    XSetForeground(display, gc, BlackPixel(display, 0));
-
-    // Draw the cube
-    int cubeSize = 100; // Adjust size as needed
-    int cubeX = (width - cubeSize) / 2;
-    int cubeY = (height - cubeSize) / 2;
-    XFillRectangle(display, window, gc, cubeX, cubeY, cubeSize, cubeSize);
-
-    // Free graphics context
-    XFreeGC(display, gc);
-
-    // Flush X server
-    XFlush(display);
 }
 
+void drawScene() {
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // Clear color and depth buffers
+    glLoadIdentity(); // Reset the modelview matrix
 
+    // Set camera view
+    gluLookAt(cameraPos[0], cameraPos[1], cameraPos[2],
+              cameraPos[0] + cameraDir[0], cameraPos[1] + cameraDir[1], cameraPos[2] + cameraDir[2],
+              cameraUp[0], cameraUp[1], cameraUp[2]);
 
+    // Draw tetrahedron
+    drawTetrahedron();
 
-// Function to clean up resources
-void destroyWindow() {
-    glXMakeCurrent(display, None, nullptr);
-    glXDestroyContext(display, glContext);
-    XDestroyWindow(display, window);
-    XCloseDisplay(display);
+    glXSwapBuffers(dpy, win); // Swap the front and back buffers to display the rendered image
+}
+
+void updateCameraPosition(int direction) {
+    // Move camera along the direction vector
+    cameraPos[0] += direction * MOVE_SPEED * cameraDir[0];
+    cameraPos[1] += direction * MOVE_SPEED * cameraDir[1];
+    cameraPos[2] += direction * MOVE_SPEED * cameraDir[2];
+}
+
+void updateCameraDirection(float deltaX, float deltaY) {
+    // Update camera direction based on mouse movement
+    GLfloat yaw = deltaX * MOUSE_SENSITIVITY;
+    GLfloat pitch = deltaY * MOUSE_SENSITIVITY;
+
+    // Rotate camera around y-axis (yaw)
+    GLfloat newX = cameraDir[0] * cos(yaw) + cameraDir[2] * sin(yaw);
+    GLfloat newZ = -cameraDir[0] * sin(yaw) + cameraDir[2] * cos(yaw);
+    cameraDir[0] = newX;
+    cameraDir[2] = newZ;
+
+    // Rotate camera around x-axis (pitch)
+    GLfloat newY = cameraDir[1] * cos(pitch) - cameraDir[2] * sin(pitch);
+    newZ = cameraDir[1] * sin(pitch) + cameraDir[2] * cos(pitch);
+    cameraDir[1] = newY;
+    cameraDir[2] = newZ;
+
+    // Update camera right vector
+    cameraRight[0] = sin(yaw - M_PI / 2);
+    cameraRight[1] = 0;
+    cameraRight[2] = cos(yaw - M_PI / 2);
+}
+
+void grabCursor() {
+    cursorCaptured = true;
+    XGrabPointer(dpy, win, True, ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                 GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+    XGrabKeyboard(dpy, win, True, GrabModeAsync, GrabModeAsync, CurrentTime);
+    XWarpPointer(dpy, None, win, 0, 0, 0, 0, gwa.width / 2, gwa.height / 2);
+    lastMouseX = gwa.width / 2;
+    lastMouseY = gwa.height / 2;
+    XDefineCursor(dpy, win, None);
+    XFlush(dpy);
+}
+
+void releaseCursor() {
+    cursorCaptured = false;
+    XUngrabPointer(dpy, CurrentTime);
+    XUngrabKeyboard(dpy, CurrentTime);
+    XUndefineCursor(dpy, win);
+    XFlush(dpy);
 }
 
 int main() {
-    createWindow(800, 600);
+    dpy = XOpenDisplay(NULL); // Open the default X display
 
-    XEvent event;
+    if (!dpy) {
+        std::cerr << "Unable to open display\n"; // Print error message if display cannot be opened
+        return -1;
+    }
+
+    root = DefaultRootWindow(dpy); // Get the root window of the default screen
+    int att[] = {GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None}; // Specify GLX visual attributes
+    vi = glXChooseVisual(dpy, 0, att); // Choose a suitable visual with desired attributes
+    cmap = XCreateColormap(dpy, root, vi->visual, AllocNone); // Create a colormap using the chosen visual
+
+    swa.colormap = cmap; // Set the colormap attribute in window attributes
+    swa.event_mask = ExposureMask | KeyPressMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask; // Set event mask for window
+    win = XCreateWindow(dpy, root, 0, 0, 800, 600, 0, vi->depth, InputOutput, vi->visual, CWColormap | CWEventMask, &swa); // Create a window
+    XMapWindow(dpy, win); // Map the window to the screen
+    XStoreName(dpy, win, "First Person Shooter"); // Set window title
+
+    glc = glXCreateContext(dpy, vi, NULL, GL_TRUE); // Create an OpenGL context
+    glXMakeCurrent(dpy, win, glc); // Make the OpenGL context current
+
+    initGL(); // Initialize OpenGL settings
+
     while (true) {
-        render();
-        XNextEvent(display, &event);
-        if (event.type == Expose) {
-            render();
+        XNextEvent(dpy, &xev); // Get the next X event
+
+        if (xev.type == Expose) {
+            XGetWindowAttributes(dpy, win, &gwa); // Get window attributes
+            resizeGL(gwa.width, gwa.height); // Resize the OpenGL viewport
+            drawScene(); // Draw the scene
         }
-        if (event.type == KeyPress) {
-            break;
+
+        if (xev.type == KeyPress) {
+            switch (XLookupKeysym(&xev.xkey, 0)) {
+                case XK_w: // Move camera forward
+                    updateCameraPosition(1);
+                    break;
+                case XK_s: // Move camera backward
+                    updateCameraPosition(-1);
+                    break;
+                case XK_a: // Strafe camera left
+                    // Move camera perpendicular to camera right vector
+                    cameraPos[0] -= MOVE_SPEED * cameraRight[0];
+                    cameraPos[1] -= MOVE_SPEED * cameraRight[1];
+                    cameraPos[2] -= MOVE_SPEED * cameraRight[2];
+                    break;
+                case XK_d: // Strafe camera right
+                    // Move camera perpendicular to camera right vector
+                    cameraPos[0] += MOVE_SPEED * cameraRight[0];
+                    cameraPos[1] += MOVE_SPEED * cameraRight[1];
+                    cameraPos[2] += MOVE_SPEED * cameraRight[2];
+                    break;
+                case XK_space: // Toggle cursor grab
+                    if (cursorCaptured)
+                        releaseCursor();
+                    else
+                        grabCursor();
+                    break;
+            }
+        }
+
+        if (xev.type == MotionNotify) {
+            if (cursorCaptured) {
+                // Update camera direction based on mouse movement
+                updateCameraDirection(xev.xmotion.x - lastMouseX, xev.xmotion.y - lastMouseY);
+                XWarpPointer(dpy, None, win, 0, 0, 0, 0, gwa.width / 2, gwa.height / 2);
+                lastMouseX = gwa.width / 2;
+                lastMouseY = gwa.height / 2;
+            }
         }
     }
 
-    destroyWindow();
+    XDestroyWindow(dpy, win); // Destroy the window
+    XCloseDisplay(dpy); // Close the X display
+
     return 0;
 }
